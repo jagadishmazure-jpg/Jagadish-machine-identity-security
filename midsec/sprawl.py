@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from .inventory import TODAY, days_since, scopes
+from .inventory import days_since, scopes
 
 # Rule thresholds (documented, deterministic).
 OVERPRIVILEGE_RATIO = 0.5    # SPRAWL-01: used/granted below this is over-scoped

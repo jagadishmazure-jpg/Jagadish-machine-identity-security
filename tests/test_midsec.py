@@ -1,11 +1,10 @@
 """Regression checks for machine-identity security (deterministic)."""
 
-import sqlite3
 from datetime import datetime, timezone
 
 import pytest
 
-from midsec import audit, demo_helpers, feedback, itdr, pam, respond, sprawl, views
+from midsec import demo_helpers, feedback, itdr, pam, respond, sprawl, views
 from midsec.audit import AuditLog
 from midsec.inventory import TODAY, connect
 from midsec.orchestrator import PostureAgent
@@ -468,3 +467,103 @@ def test_demo_sample_run():
 
 def test_demo_audit_verify():
     assert demo_helpers.audit_verify_demo()
+
+
+# ---------- review fixes (grokbot-portfolio, 2026-10-18) ----------
+T0 = datetime(2026, 10, 18, 9, 0, tzinfo=timezone.utc)
+
+
+def _high_risk_pending(conn):
+    e = pam.request_elevation(conn, "svc-etl-legacy", "data-oncall", now=T0)
+    assert e["needs_confirmation"] and e["status"] == "pending"
+    return e
+
+
+def test_requester_cannot_confirm_own_elevation(conn):
+    e = _high_risk_pending(conn)
+    with pytest.raises(pam.ElevationError, match="PAM-SOD-01"):
+        pam.confirm_elevation(conn, e["id"], "data-oncall", now=T0)
+    with pytest.raises(pam.ElevationError, match="PAM-SOD-01"):
+        pam.confirm_elevation(conn, e["id"], " DATA-ONCALL ", now=T0)
+    assert pam.confirm_elevation(conn, e["id"], "sec-oncall", now=T0)["status"] == "approved"
+
+
+@pytest.mark.parametrize("hours", [0, -1, 8.01, 10_000])
+def test_elevation_duration_is_bounded(conn, hours):
+    with pytest.raises(pam.ElevationError, match="PAM-TTL-01"):
+        pam.request_elevation(conn, "key-webhook", "team-platform", duration_h=hours, now=T0)
+    assert conn.execute("SELECT COUNT(*) FROM elevations").fetchone()[0] == 0
+
+
+def test_revoked_identity_cannot_be_elevated(conn):
+    respond.revoke_key(conn, "key-webhook", confirmed=True, dry_run=False)
+    with pytest.raises(pam.ElevationError, match="PAM-STATUS-01"):
+        pam.request_elevation(conn, "key-webhook", "team-platform", now=T0)
+
+
+def test_auto_approval_is_attributed_to_policy_not_requester(conn):
+    e = pam.request_elevation(conn, "key-webhook", "team-platform", now=T0)
+    row = pam.session_record(conn, e["id"])
+    assert e["status"] == "approved" and row["confirmed_by"] == pam.AUTO_APPROVER
+
+
+def test_token_reuse_revokes_every_identity_sharing_the_token(conn):
+    finding = next(f for f in itdr.run_all(conn) if f["signal_id"] == "SIG-REUSE-01")
+    assert len(finding["identity_ids"]) == 2
+    out = respond.respond_to_finding(conn, finding, confirmed=True, dry_run=False)
+    status = {i: conn.execute("SELECT status FROM identities WHERE id=?", (i,)).fetchone()[0]
+              for i in finding["identity_ids"]}
+    assert set(status.values()) == {"revoked"} and len(out["results"]) == 2
+
+
+@pytest.mark.parametrize("fn", [respond.revoke_key, respond.disable_identity])
+def test_response_on_unknown_identity_reports_no_effect(conn, fn):
+    with pytest.raises(KeyError, match="RESP-KNOWN-01"):
+        fn(conn, "svc-does-not-exist", confirmed=True, dry_run=False)
+    with pytest.raises(KeyError, match="RESP-KNOWN-01"):
+        respond.force_rotation(conn, "svc-does-not-exist", dry_run=False)
+
+
+def test_rotation_date_defaults_to_reference_day(conn):
+    out = respond.force_rotation(conn, "key-webhook", dry_run=False)
+    assert out["effect"] == f"secret_rotated={TODAY.isoformat()}"
+
+
+def test_audit_stores_a_copy_of_the_detail():
+    log = AuditLog()
+    detail = {"id": "x", "n": 1}
+    log.record("k", detail)
+    detail["n"] = 2  # caller keeps using its own dict
+    assert log.verify() and log.entries[0]["detail"]["n"] == 1
+
+
+def test_posture_view_counts_empty_scope_list_as_zero(conn):
+    conn.execute("INSERT INTO identities VALUES ('key-empty','api_key','Empty','team-x','',"
+                 "'','2026-10-01',NULL,NULL,1,'active')")
+    row = views.run_query(conn, "SELECT scopes_granted_n, scopes_used_n FROM v_identity_posture"
+                                " WHERE id = 'key-empty'")[0]
+    assert tuple(row) == (0, 0)
+
+
+def test_agent_run_audits_every_step_and_chain_verifies(conn):
+    log = AuditLog()
+    PostureAgent(conn, audit=log).run()
+    kinds = [e["kind"] for e in log.entries]
+    for k in ("agent.scan", "agent.detect", "agent.plan", "agent.escalated", "agent.run_complete"):
+        assert k in kinds
+    assert log.verify()
+
+
+def test_vault_secret_never_in_audit_or_session(conn):
+    log = AuditLog()
+    v = pam.Vault()
+    ref = v.store("svc-billing-01", "s3cr3t-value-123")
+    v.retrieve(ref, audit=log)
+    e = pam.request_elevation(conn, "key-webhook", "team-platform", audit=log, now=T0)
+    blob = repr(log.entries) + repr(pam.session_record(conn, e["id"]))
+    assert "s3cr3t-value-123" not in blob and ref in blob
+
+
+def test_departed_owner_cannot_request_elevation(conn):
+    with pytest.raises(pam.ElevationError, match="PAM-DEPARTED-01"):
+        pam.request_elevation(conn, "svc-etl-legacy", "ex-chen", now=T0)

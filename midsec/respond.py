@@ -11,10 +11,18 @@ from __future__ import annotations
 import sqlite3
 
 from .audit import AuditLog
+from .inventory import TODAY
 
 
 class ConfirmationRequired(Exception):
     """Raised when a destructive action lacks explicit confirmation."""
+
+
+def _require_known(conn: sqlite3.Connection, identity_id: str) -> None:
+    """RESP-KNOWN-01: never report an effect on an identity that does not exist."""
+    if conn.execute("SELECT 1 FROM identities WHERE id = ?",
+                    (identity_id,)).fetchone() is None:
+        raise KeyError(f"RESP-KNOWN-01: unknown identity {identity_id!r}")
 
 
 def _require_confirmation(confirmed: bool, action: str, identity_id: str) -> None:
@@ -28,6 +36,7 @@ def revoke_key(conn: sqlite3.Connection, identity_id: str,
                confirmed: bool = False, dry_run: bool = True,
                audit: AuditLog | None = None) -> dict:
     """Revoke an API key / credential. Destructive: needs confirmation."""
+    _require_known(conn, identity_id)
     _require_confirmation(confirmed, "revoke", identity_id)
     if dry_run:
         result = {"action": "revoke", "identity_id": identity_id,
@@ -47,6 +56,7 @@ def disable_identity(conn: sqlite3.Connection, identity_id: str,
                      confirmed: bool = False, dry_run: bool = True,
                      audit: AuditLog | None = None) -> dict:
     """Disable an identity. Destructive: needs confirmation."""
+    _require_known(conn, identity_id)
     _require_confirmation(confirmed, "disable", identity_id)
     if dry_run:
         result = {"action": "disable", "identity_id": identity_id,
@@ -63,10 +73,12 @@ def disable_identity(conn: sqlite3.Connection, identity_id: str,
 
 
 def force_rotation(conn: sqlite3.Connection, identity_id: str,
-                   rotated_on: str = "2026-10-18",
+                   rotated_on: str | None = None,
                    dry_run: bool = True,
                    audit: AuditLog | None = None) -> dict:
     """Force a secret rotation. Non-destructive: no confirmation needed."""
+    _require_known(conn, identity_id)
+    rotated_on = rotated_on or TODAY.isoformat()
     if dry_run:
         result = {"action": "rotate", "identity_id": identity_id,
                   "dry_run": True, "effect": "none"}
@@ -87,9 +99,17 @@ def respond_to_finding(conn: sqlite3.Connection, finding: dict,
     """Map a finding to the deterministic response playbook."""
     sig = finding["signal_id"]
     ident = finding["identity_id"]
-    if sig in ("SIG-TRAVEL-01", "SIG-REUSE-01"):
+    if sig == "SIG-REUSE-01":
+        # RESP-REUSE-01: a shared token is compromised for *every* identity
+        # using it, so every one is revoked, not just the first.
+        ids = finding.get("identity_ids") or ident.split(",")
+        results = [revoke_key(conn, i, confirmed=confirmed, dry_run=dry_run,
+                              audit=audit) for i in ids]
+        return {"action": "revoke", "identity_id": ",".join(ids),
+                "dry_run": dry_run, "results": results}
+    if sig == "SIG-TRAVEL-01":
         # Critical: revoke the credential (needs confirmation).
-        return revoke_key(conn, ident.split(",")[0], confirmed=confirmed,
+        return revoke_key(conn, ident, confirmed=confirmed,
                           dry_run=dry_run, audit=audit)
     if sig in ("SIG-GEO-01", "SIG-SPIKE-01"):
         # High: force rotation (no confirmation needed).

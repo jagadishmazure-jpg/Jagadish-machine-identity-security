@@ -6,7 +6,9 @@
 - **Least-privilege ratio**: used/granted scopes under 0.5 is trimmable
   without behavior change — a cheap, defensible first cut.
 - **JIT over standing access**: privileged machine access as 1-hour
-  elevations that auto-expire; risk > 0.7 needs a human.
+  elevations (capped at 8h) that auto-expire; risk > 0.7 needs a human who
+  is not the requester. Review found self-confirmation was possible; it is
+  now refused and tested.
 - **Fail-closed automation**: the agent auto-runs only rotations; revokes
   and disables wait for confirmation. Dry-run by default.
 - **Gateway backstop**: a real bypass class (comma joins, quoted names,

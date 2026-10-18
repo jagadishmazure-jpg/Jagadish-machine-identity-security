@@ -3,7 +3,7 @@
 ## Setup
 
 ```bash
-python3 -m pytest tests/ -q     # 69 tests, stdlib only
+python3 -m pytest tests/ -q     # stdlib only; see README for the live count
 python3 scripts/count_tests.py  # prints the real total
 ```
 

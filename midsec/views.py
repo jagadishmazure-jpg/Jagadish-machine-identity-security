@@ -13,7 +13,7 @@ import re
 import sqlite3
 
 from .authz import views_only
-from .inventory import TODAY, days_since
+from .inventory import TODAY
 
 ALLOWED_VIEWS = ("v_identity_posture", "v_stale_identities",
                  "v_elevation_history")
@@ -22,10 +22,12 @@ MAX_ROWS = 100
 _VIEWS_SQL_TEMPLATE = """
 CREATE VIEW IF NOT EXISTS v_identity_posture AS
 SELECT id, kind, display_name, owner, status, vaulted,
-       length(scopes_granted) - length(replace(scopes_granted, ',', '')) + 1
-         AS scopes_granted_n,
-       length(scopes_used) - length(replace(scopes_used, ',', '')) + 1
-         AS scopes_used_n,
+       CASE WHEN trim(scopes_granted) = '' THEN 0 ELSE
+         length(scopes_granted) - length(replace(scopes_granted, ',', '')) + 1
+       END AS scopes_granted_n,
+       CASE WHEN trim(scopes_used) = '' THEN 0 ELSE
+         length(scopes_used) - length(replace(scopes_used, ',', '')) + 1
+       END AS scopes_used_n,
        last_used, secret_rotated
 FROM identities;
 
@@ -87,7 +89,7 @@ def run_query(conn: sqlite3.Connection, sql: str,
             cur = conn.execute(sql, params)
             rows = cur.fetchmany(MAX_ROWS + 1)
         except sqlite3.DatabaseError as exc:
-            raise GatewayDenied(f"authorizer denied: {denied or exc}")
+            raise GatewayDenied(f"authorizer denied: {denied or exc}") from None
     if denied:
         raise GatewayDenied(f"authorizer denied: {denied}")
     return rows[:MAX_ROWS]
@@ -105,7 +107,7 @@ def run_query_authorizer_only(conn: sqlite3.Connection, sql: str,
             cur = conn.execute(sql, params)
             rows = cur.fetchmany(MAX_ROWS + 1)
         except sqlite3.DatabaseError:
-            raise GatewayDenied(f"authorizer denied: {denied}")
+            raise GatewayDenied(f"authorizer denied: {denied}") from None
     if denied:
         raise GatewayDenied(f"authorizer denied: {denied}")
     return rows[:MAX_ROWS]

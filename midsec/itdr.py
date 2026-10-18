@@ -120,6 +120,7 @@ def detect_token_reuse(conn: sqlite3.Connection) -> list[dict]:
     return [{
         "signal_id": "SIG-REUSE-01",
         "identity_id": r["ids"],
+        "identity_ids": sorted(r["ids"].split(",")),
         "severity": "critical",
         "detail": f"token {r['token_fp']} used by {r['ids']}",
     } for r in rows]

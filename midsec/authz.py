@@ -2,22 +2,22 @@
 
 The regex gateway rejects writes and multi-statements, but text scanning
 cannot see every way SQLite names a table: comma joins, ``/**/`` comments
-in place of whitespace, parenthesised table names, and double-quoted
-identifiers all reach base tables or ``sqlite_master`` without a
-``FROM <name>`` token for a regex to match.
+in place of whitespace, and double-quoted identifiers all reach base tables
+or ``sqlite_master`` without a ``FROM <name>`` token for a regex to match.
 
 While a gateway query runs, SQLite itself is asked to authorize every
 access. Reads are allowed only on the allowlisted views, or on base-table
 columns that SQLite reads *on behalf of* one of those views (the
-authorizer's ``source`` argument names the view). A base-table read with
-no view name is a direct read and is denied. Schema tables are always
-denied, as are pragmas, writes and ``load_extension``. All of this happens
-before the statement executes, independent of any text check.
+authorizer's view-name argument names an allowed view). A base-table read
+with no view name is a direct read and is denied. The schema table is
+always denied, as are pragmas, writes and ``load_extension``. All of this
+happens before the statement executes, independent of any text check.
 
 One narrow exception: SQLite reports a read with an empty column name and
 no view name for a table that supplies no columns (one side of a view
 self-join, or ``count(*)``). No column data is returned, so it is allowed
-only for tables that sit behind an allowed view.
+only for tables that sit behind an allowed view. Residual: ``SELECT
+count(*) FROM <such table>`` returns a row count.
 """
 
 from __future__ import annotations
@@ -27,8 +27,7 @@ from contextlib import contextmanager
 
 _SQLITE_RECURSIVE = getattr(sqlite3, "SQLITE_RECURSIVE", 33)
 _ALWAYS_OK = {sqlite3.SQLITE_SELECT, sqlite3.SQLITE_FUNCTION, _SQLITE_RECURSIVE}
-_SCHEMA_TABLES = {"sqlite_master", "sqlite_schema",
-                  "sqlite_temp_master", "sqlite_temp_schema"}
+_SCHEMA_TABLES = {"sqlite_master", "sqlite_schema", "sqlite_temp_master", "sqlite_temp_schema"}
 _DENIED_FUNCTIONS = {"load_extension"}
 
 
@@ -55,7 +54,7 @@ def _tables_behind(conn, allowed):
 
 @contextmanager
 def views_only(conn: sqlite3.Connection, allowed_views):
-    """Authorize only reads of ``allowed_views`` for the block duration.
+    """Authorize only reads of ``allowed_views`` for the duration of the block.
 
     Yields a list that collects the names of denied objects, so the caller
     can raise an error that cites them.
@@ -73,14 +72,14 @@ def views_only(conn: sqlite3.Connection, allowed_views):
             if table in allowed or (source or "").lower() in allowed:
                 return sqlite3.SQLITE_OK
             # SQLite reports a read with an empty column name (and no view
-            # name) for a flattened view's table that supplies no columns.
-            # No column data is read, so allow it for tables behind a view.
+            # name) for a flattened view's table that supplies no columns,
+            # e.g. one side of a view self-join. No column data is read, so
+            # allow it for tables behind an allowed view.
             if not arg2 and table in underlying:
                 return sqlite3.SQLITE_OK
             denied.append(arg1 or "?")
             return sqlite3.SQLITE_DENY
-        if action == sqlite3.SQLITE_FUNCTION and \
-                (arg2 or "").lower() in _DENIED_FUNCTIONS:
+        if action == sqlite3.SQLITE_FUNCTION and (arg2 or "").lower() in _DENIED_FUNCTIONS:
             denied.append(arg2)
             return sqlite3.SQLITE_DENY
         if action in _ALWAYS_OK:

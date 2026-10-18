@@ -17,6 +17,9 @@ class AuditLog:
         self._last = "GENESIS"
 
     def record(self, kind: str, detail: dict) -> dict:
+        # AUDIT-COPY-01: store a JSON-safe copy so a caller changing its own
+        # dict later cannot make an untampered chain fail verification.
+        detail = json.loads(json.dumps(detail, sort_keys=True, default=str))
         at = _utcnow()
         payload = json.dumps({"kind": kind, "detail": detail,
                               "prev": self._last, "at": at},

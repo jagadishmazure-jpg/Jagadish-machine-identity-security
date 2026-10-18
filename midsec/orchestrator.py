@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from . import itdr, pam, respond, sprawl, views
+from . import itdr, respond, sprawl, views
 from .audit import AuditLog
 
 AUTO_RISK = 0.3   # at or below: agent may act alone (rotation only)

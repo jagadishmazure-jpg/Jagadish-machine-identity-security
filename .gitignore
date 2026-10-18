@@ -5,3 +5,6 @@ __pycache__/
 *.db
 *.sqlite
 .DS_Store
+*.py[cod]
+.ruff_cache/
+*.pdf

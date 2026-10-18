@@ -3,7 +3,7 @@
 try:
     import streamlit as st
 except ImportError:  # pragma: no cover
-    raise SystemExit("pip install streamlit to run the demo")
+    raise SystemExit("pip install streamlit to run the demo") from None
 
 
 def main() -> None:

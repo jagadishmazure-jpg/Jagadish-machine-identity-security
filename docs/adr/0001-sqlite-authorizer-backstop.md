@@ -31,3 +31,12 @@ data is returned.
   prove raw-table reads are denied — this is a standing rule for all future
   gateway work.
 - View self-joins keep working via the empty-column exception.
+
+## Revision (2026-10-18)
+
+The authorizer was replaced by the shared strict template
+(`midsec/authz.py`): schema tables, writes, PRAGMA and `load_extension`
+are denied, and the empty-column exception applies only to tables behind
+an allowed view. `tests/test_authorizer_strict.py` (16 tests) proves each
+bypass class is denied with the text check off. Residual: `count(*)` on a
+table behind a view returns a row count, never column values.
