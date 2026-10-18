@@ -1,0 +1,12 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "machine-identity-security"
+version = "0.1.0"
+description = "Non-human identity security: lifecycle scoring, PAM, ITDR"
+requires-python = ">=3.10"
+
+[tool.hatch.build.targets.wheel]
+packages = ["midsec"]
